@@ -2144,12 +2144,8 @@ _RUN_PANEL_SAMPLING = "Sampling"
 _RUN_PANEL_ADVANCED = "Advanced"
 
 
-@studio_app.command(
-    context_settings = {
-        "allow_extra_args": True,
-        "ignore_unknown_options": True,
-    },
-)
+# Moish seam: `unsloth studio run` (a local llama-server with tools on) is not a command in
+# this build — every model call goes through the Moish gateway (Moish plan.md §2.2 #12).
 def run(
     ctx: typer.Context,
     model: Optional[str] = typer.Option(

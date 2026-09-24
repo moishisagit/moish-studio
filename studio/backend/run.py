@@ -1508,12 +1508,6 @@ def _graceful_shutdown(server = None):
         logger.warning("Error shutting down llama-server: %s", e)
 
     try:
-        from cloudflare_tunnel import close_studio_tunnel_lifecycle
-        close_studio_tunnel_lifecycle()
-    except Exception as e:
-        logger.warning("Error stopping Cloudflare tunnel: %s", e)
-
-    try:
         from utils.process_lifetime import clear_breadcrumb, terminate_all
         terminate_all()
         clear_breadcrumb()  # nothing left for the next startup to sweep
@@ -1558,7 +1552,7 @@ _server_thread = None
 
 _shutdown_event = None
 
-# trycloudflare.com URL for wildcard binds (set by run_server, read by the banner);
+# Tunnel URL (always None in this Moish seam build: no tunnel; set by run_server, read by the banner);
 # None when there is no tunnel (loopback, disabled, or a silently-ignored failure).
 _cloudflare_url = None
 
@@ -1886,13 +1880,8 @@ def _setup_server_disk_logging():
 def _cloudflare_tunnel_should_start(
     *, cloudflare: bool, host: str, secure: bool, api_only: bool, is_colab: bool
 ) -> bool:
-    """Whether to start the Cloudflare tunnel. --secure exposes only the tunnel (loopback bind), so it
-    tunnels even api-only; otherwise tunnel wildcard binds, never api-only (Tauri) or Colab."""
-    if is_colab or not cloudflare:
-        return False
-    if secure:
-        return True
-    return is_wildcard_host(host) and not api_only
+    """Moish seam: never. The Cloudflare tunnel is not in this build (loopback only)."""
+    return False
 
 
 def _final_bound_port(server, requested_port: int) -> int:
@@ -2313,7 +2302,7 @@ def _drops_its_marker_on_failure(start):
 @_drops_its_marker_on_failure
 def run_server(
     host: str = "127.0.0.1",
-    port: int = 8888,
+    port: int = 8890,
     frontend_path: Path = _DEFAULT_FRONTEND_PATH,
     silent: bool = False,
     api_only: bool = False,
@@ -2342,6 +2331,17 @@ def run_server(
 
     if not isinstance(host, str) or not host.strip():
         raise SystemExit("--host cannot be empty; use 0.0.0.0 to bind every IPv4 interface.")
+    # Moish seam (Moish plan.md §1.2): Studio binds loopback only. No LAN, no tunnel.
+    import ipaddress as _ipaddress
+
+    try:
+        _loopback = host == "localhost" or _ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        _loopback = False
+    if not _loopback:
+        raise SystemExit(f"refusing to bind Studio to {host!r}: this build is loopback only.")
+    if secure or cloudflare:
+        raise SystemExit("--secure / --cloudflare are not available in this build (loopback only).")
 
     boot_started = time.perf_counter()
 
@@ -2723,10 +2723,6 @@ def run_server(
         app.state.suppress_bootstrap_injection = True
         app.state.bootstrap_password = None
 
-    from cloudflare_tunnel import open_studio_tunnel_lifecycle
-
-    open_studio_tunnel_lifecycle()
-
     # Run server in a daemon thread with explicit new_event_loop() + run_until_complete() (not asyncio.run) so
     # nest_asyncio's patches do not interfere when Colab/IPython already runs a loop on the main thread.
     def _run():
@@ -2836,38 +2832,13 @@ def run_server(
                 parent_pid = int(owner_pid) if owner_pid.isdigit() else None,
             )
 
-    from cloudflare_tunnel import (
-        set_studio_tunnel_runtime_callback,
-        set_studio_tunnel_url_callback,
-    )
-    from utils.host_policy import set_remote_connector_active
-
-    set_studio_tunnel_runtime_callback(set_remote_connector_active)
-    set_studio_tunnel_url_callback(lambda url: _publish_cloudflare_url(app.state, url))
     app.state.remote_access_ready = True
     app.state.lan_access_ready = True
 
-    # Free trycloudflare.com tunnel for wildcard binds (the raw ip:port is often unreachable). Started
-    # pre-banner and even when silent so the CLI banner can read app.state.cloudflare_url; torn down by
-    # _graceful_shutdown.
+    # Moish seam: there is no tunnel in this build (upstream started a public quick tunnel here).
     _cloudflare_enabled = _launch_tunnel_managed
     _cloudflare_requested = _cloudflare_enabled
 
-    if _cloudflare_enabled:
-        try:  # best-effort: any failure must not block startup
-            from cloudflare_tunnel import start_studio_tunnel
-            start_studio_tunnel(
-                port,
-                managed_by = "launch",
-                origin_host = app.state.server_request_host,
-            )
-        except Exception as e:
-            logger.debug("Cloudflare tunnel skipped: %s", e)
-
-    # Backstop for both launch- and settings-managed tunnels on abnormal exits.
-    from cloudflare_tunnel import close_studio_tunnel_lifecycle
-
-    atexit.register(close_studio_tunnel_lifecycle)
 
     # --secure fails closed: no tunnel means no public link, so exit rather than silently fall back to a
     # raw port.
@@ -2962,7 +2933,7 @@ def _build_arg_parser():
         "A literal value is visible in the process list. Rotate later via "
         "`unsloth studio reset-password`.",
     )
-    parser.add_argument("--port", type = int, default = 8888, help = "Port to bind to")
+    parser.add_argument("--port", type = int, default = 8890, help = "Port to bind to (Moish seam: 8890)")
     parser.add_argument(
         "--frontend",
         type = str,

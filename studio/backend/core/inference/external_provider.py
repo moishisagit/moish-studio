@@ -1289,6 +1289,17 @@ class ExternalProviderClient:
         timeout: float = 120.0,
     ):
         self.provider_type = provider_type
+        # Moish seam (Invariant 8): the only provider in this build is Moish. Any other type is refused here,
+        # the single choke point every outbound provider request passes through.
+        from core.inference.providers import PROVIDER_REGISTRY
+
+        if provider_type not in PROVIDER_REGISTRY:
+            raise ValueError(f"provider type {provider_type!r} does not exist in this build; the only provider is Moish")
+        if provider_type == "moish":
+            from moish import config as _moish_config
+
+            base_url = _moish_config.gateway_url()
+            api_key = _moish_config.read_token() or ""
         # Single choke point for every outbound provider request (chat, models, responses, messages, containers): the
         # URL is caller-controlled, so it is validated here even when a route already checked it. Routes turn the
         # ValueError into a 400; reaching it here means a caller bypassed them.
@@ -1381,6 +1392,20 @@ class ExternalProviderClient:
         only when supplied, since the frontend's capability map already filters them per provider.
         ``fast_mode`` only applies to Anthropic Opus 5 / Opus 4.8 (silently dropped elsewhere); it
         adds the beta header and ``speed: "fast"``."""
+        # Moish seam: the gateway is a whitelist, so the Moish provider sends exactly its contract (moish/client.py).
+        if self.provider_type == "moish":
+            from moish.client import stream_moish
+
+            async for line in stream_moish(
+                messages,
+                model,
+                temperature = temperature,
+                top_p = top_p,
+                max_tokens = max_tokens,
+                stream = stream,
+            ):
+                yield line
+            return
         # tool_choice="none" hard-disables hosted/builtin tools across every provider so enabled_tools cannot
         # accidentally bill or leak.
         tool_choice_disabled = (

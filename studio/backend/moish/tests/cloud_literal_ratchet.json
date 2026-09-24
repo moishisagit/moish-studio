@@ -1,0 +1,13 @@
+{
+  "_comment": "Cloud-provider host literals still present in the fork after Studio slice 1 (Moish plan.md O16). Each is in code that is unreachable in this build (the provider registry is {moish} and ExternalProviderClient refuses every other type). This is a ratchet: a file may only disappear or shrink, never appear or grow. Removing the remaining translation code is tracked in Moish docs/known-issues.md.",
+  "studio/backend/core/inference/external_provider.py": 7,
+  "studio/backend/models/inference.py": 2,
+  "studio/backend/routes/export.py": 1,
+  "studio/backend/routes/inference.py": 4,
+  "studio/frontend/src/features/chat/api/openai-containers.ts": 1,
+  "studio/frontend/src/features/chat/openai-codex-connect.tsx": 1,
+  "studio/frontend/src/features/chat/provider-capabilities.ts": 2,
+  "studio/frontend/src/features/chat/sync-external-providers.ts": 1,
+  "studio/frontend/src/features/data-recipes/learning-recipes/conversation.json": 1,
+  "studio/frontend/src/features/data-recipes/learning-recipes/ocr-document-extraction.json": 1
+}

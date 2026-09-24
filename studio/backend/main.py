@@ -338,7 +338,6 @@ from routes import (
     skills_router,
     models_router,
     providers_router,
-    openai_codex_auth_router,
     rag_router,
     research_runs_router,
     chat_generation_runs_router,
@@ -348,9 +347,7 @@ from routes import (
     video_openai_router,
     youtube_router,
 )
-from routes.llama import router as llama_router
 from routes.llama_compat import is_engine_probe_path, router as llama_compat_router
-from routes.whisper import router as whisper_router
 from routes.preview import router as preview_router
 from hub.routes import (
     inventory_router as hub_inventory_router,
@@ -405,7 +402,6 @@ from utils.update_status import (
     get_studio_install_source_status,
     get_studio_update_status,
 )
-from utils.release_notes import get_release_notes, is_supported_version_query
 from utils.studio_version import get_studio_version
 from utils.api_errors import install_api_error_handlers
 
@@ -928,9 +924,6 @@ async def lifespan(app: FastAPI):
 
     await asyncio.to_thread(_release_api_usage_writer, _api_usage_writer_lease)
 
-    from core.inference.openai_codex_auth import shutdown_flows
-
-    await shutdown_flows()
     try:
         from core.rag.folder_sync import stop_auto_sync
         stop_auto_sync()
@@ -984,8 +977,9 @@ app = FastAPI(
 )
 app.state.secure = os.environ.get("UNSLOTH_SECURE") == "1"
 
-# The MCP surface is opt-in: it can start GPU jobs and write model artifacts.
-if os.environ.get("UNSLOTH_STUDIO_ENABLE_MCP") == "1":
+# Moish seam: the Studio MCP surface (it can start GPU jobs and write model artifacts) is
+# not mounted in this build, whatever the environment says. See moish/UPSTREAM_DELTA.md.
+if False:  # was: os.environ.get("UNSLOTH_STUDIO_ENABLE_MCP") == "1"
     from fastmcp.utilities.lifespan import combine_lifespans
 
     from mcp_server import BearerTokenMiddleware, create_studio_mcp
@@ -1600,16 +1594,20 @@ from utils.remote_access_settings import RemoteAccessStopResponseMiddleware  # n
 
 app.add_middleware(RemoteAccessStopResponseMiddleware)
 
+# Moish seam (Studio slice 1): provider = {moish}, local runtimes guarded, tools/keyless off,
+# /api/moish/selfcheck. Cloud, tunnel, MCP, research, media, update, hub-token, export, RAG
+# and data-recipe routers are not mounted in this build (moish/UPSTREAM_DELTA.md).
+import moish
+
+moish.register(app)
 app.include_router(auth_router, prefix = "/api/auth", tags = ["auth"])
 app.include_router(
     __import__("routes.accounts", fromlist = ["router"]).router,
     prefix = "/api/accounts",
     tags = ["accounts"],
 )
-app.include_router(training_router, prefix = "/api/train", tags = ["training"])
 app.include_router(models_router, prefix = "/api/models", tags = ["models"])
 app.include_router(chat_history_router, prefix = "/api/chat", tags = ["chat"])
-app.include_router(research_runs_router, prefix = "/api/chat/research-runs", tags = ["research-runs"])
 app.include_router(
     chat_generation_runs_router,
     prefix = "/api/inference/chat-runs",
@@ -1620,9 +1618,6 @@ app.include_router(inference_router, prefix = "/api/inference", tags = ["inferen
 app.include_router(inference_studio_router, prefix = "/api/inference", tags = ["inference"])
 
 # Unsloth-only text-to-video endpoints; not exposed on the /v1 OpenAI-compat prefix.
-app.include_router(video_router, prefix = "/api/inference", tags = ["inference"])
-app.include_router(video_openai_router, prefix = "/api/inference", tags = ["inference"])
-app.include_router(video_openai_router, prefix = "/v1", tags = ["openai-compat"])
 
 app.include_router(inference_router, prefix = "/v1", tags = ["openai-compat"])
 # llama-server / Ollama discovery probes. Declares its own full paths (/props, /version, /api/tags, ...) so it
@@ -1632,25 +1627,13 @@ app.include_router(llama_compat_router, tags = ["openai-compat"])
 app.include_router(preview_router, prefix = "/p", tags = ["preview"])
 app.include_router(providers_router, prefix = "/api/providers", tags = ["providers"])
 
-app.include_router(openai_codex_auth_router, prefix = "/api/providers", tags = ["providers"])
 
 app.include_router(settings_router, prefix = "/api/settings", tags = ["settings"])
-app.include_router(mcp_servers_router, prefix = "/api/mcp/servers", tags = ["mcp"])
-app.include_router(skills_router, prefix = "/api/skills", tags = ["skills"])
 app.include_router(prompts_router, prefix = "/api/prompts", tags = ["prompts"])
 app.include_router(profile_stats_router, prefix = "/api/profile", tags = ["profile"])
 app.include_router(datasets_router, prefix = "/api/datasets", tags = ["datasets"])
-app.include_router(data_recipe_router, prefix = "/api/data-recipe", tags = ["data-recipe"])
-app.include_router(llama_router, prefix = "/api/llama", tags = ["llama"])
-app.include_router(whisper_router, prefix = "/api/whisper", tags = ["whisper"])
-app.include_router(export_router, prefix = "/api/export", tags = ["export"])
-app.include_router(rag_router, prefix = "/api/rag", tags = ["rag"])
-app.include_router(training_history_router, prefix = "/api/train", tags = ["training-history"])
 app.include_router(hub_inventory_router, prefix = "/api/hub", tags = ["hub"])
-app.include_router(hub_datasets_router, prefix = "/api/hub/datasets", tags = ["hub"])
 app.include_router(picker_templates_router, prefix = "/api/picker", tags = ["picker"])
-app.include_router(hub_token_router, prefix = "/api/hub", tags = ["hub"])
-app.include_router(youtube_router, prefix = "/api/youtube", tags = ["youtube"])
 
 # Re-wrap /v1/* client errors into OpenAI/Anthropic envelopes; non-/v1 keeps {"detail": ...}.
 install_api_error_handlers(app)
@@ -2027,16 +2010,6 @@ def studio_update_status(_current_subject: str = Depends(get_current_subject)):
     return get_studio_update_status(UNSLOTH_VERSION)
 
 
-@app.get("/api/studio/release-notes")
-def studio_release_notes(
-    version: str = Query(..., max_length = 64),
-    refresh: bool = Query(False),
-    _current_subject: str = Depends(get_current_subject),
-):
-    """Return the newest release's notes. `version` is echoed, not looked up."""
-    if not is_supported_version_query(version):
-        raise HTTPException(status_code = 422, detail = "Invalid version.")
-    return get_release_notes(version, refresh = refresh)
 
 
 @app.get(
@@ -2614,8 +2587,6 @@ def get_hardware_info(
         **video_capability(),
     }
     if include_details:
-        from utils.llama_cpp_update import get_installed_llama_version
-
         # All backend-visible GPUs (respects CUDA_VISIBLE_DEVICES); get_gpu_summary reports only the primary. Sort by
         # visible_ordinal: the nvidia-smi path returns physical order, so a reordering CUDA_VISIBLE_DEVICES (e.g.
         # "5,3") would mislabel by array index.
@@ -2624,7 +2595,7 @@ def get_hardware_info(
             {"name": d.get("name"), "vram_total_gb": d.get("memory_total_gb")}
             for d in sorted(devices, key = lambda d: d.get("visible_ordinal", 0))
         ]
-        body["llama_cpp"] = get_installed_llama_version()
+        body["llama_cpp"] = None  # Moish seam: Studio ships no llama.cpp; Moish owns the runtime
     return body
 
 

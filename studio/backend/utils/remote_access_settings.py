@@ -170,191 +170,30 @@ def _worker_is_current(
 
 
 def remote_access_status(app_state) -> dict:
-    from cloudflare_tunnel import get_studio_tunnel_control_token, get_studio_tunnel_status
-
-    status = get_studio_tunnel_status()
-    current = get_studio_tunnel_control_token()
-    with _worker_lock:
-        starting = _worker_is_current(_start_worker, _start_worker_admission, current)
-        stopping = _worker_is_current(_stop_worker, _stop_worker_admission, current)
-        generation_advanced = stopping and _stop_worker_admission[1] != current[1]
-    # A stop worker outlives its teardown. Only one that advanced the generation
-    # and left the tunnel off with nothing pending has actually performed it.
-    if generation_advanced and status["state"] == "off" and not status.get("stop_pending"):
-        stopping = False
-    if stopping:
-        status.update(state = "stopping", managed_by = "settings", url = None, error = None)
-    elif starting and status["state"] in {"off", "error"}:
-        status.update(state = "starting", managed_by = "settings", url = None, error = None)
-
-    intent = getattr(app_state, "remote_access_intent", "disabled")
-    is_colab = bool(getattr(app_state, "remote_access_is_colab", False))
-    launch_managed = bool(getattr(app_state, "remote_access_launch_managed", False))
-    ready = bool(getattr(app_state, "remote_access_ready", False))
-    owner = status["managed_by"]
-    state = status["state"]
-    stop_pending = bool(status.get("stop_pending"))
-    # Reported on its own too: a higher-precedence block hides the reason, but
-    # the desktop still offers setting the password that is pending.
-    password_pending = not _admin_password_ready()
-    block_reason = None
-    if not ready:
-        block_reason = "server_starting"
-    elif is_colab:
-        block_reason = "colab_managed" if owner == "colab" else "colab"
-    elif intent == "disabled":
-        block_reason = "explicitly_disabled"
-    elif launch_managed:
-        block_reason = "launch_managed"
-    elif password_pending:
-        block_reason = "admin_password_change_required"
-    elif owner in {"launch", "colab"}:
-        block_reason = f"{owner}_managed"
-
-    controllable = block_reason is None
-    can_start = controllable and not stopping and not stop_pending and state in {"off", "error"}
-    can_stop = owner == "settings" and (stop_pending or state in {"starting", "online"})
-    error = status["error"]
-    if error not in {
-        None,
-        "cloudflared is unavailable",
-        "cloudflared did not produce a URL",
-        "Cloudflare URL was not reachable",
-        "cloudflared did not register a connection",
-        "cloudflared exited",
-        # Why Start is blocked: the connector's exit was never confirmed
-        "cloudflared could not be stopped",
-    }:
-        error = "Cloudflare tunnel failed"
+    """Moish seam: remote access (the Cloudflare tunnel) does not exist in this build.
+    Studio, the Moish gateway and the inference runtime bind loopback only (Moish plan.md §1.2)."""
     return {
-        "state": state,
-        "url": status["url"],
-        "error": error,
-        "auto_start": get_remote_access_auto_start(),
-        "available": ready and not is_colab and intent != "disabled",
-        "managed_by": owner,
-        "can_start": can_start,
-        "can_stop": can_stop,
-        "block_reason": block_reason,
-        "password_pending": password_pending,
-        # Plain GET/EventSource support, not Unsloth's own streams, which use POST.
-        # Measured on three quick tunnels: a streamed GET delivers nothing until it
-        # closes, and no response header changes that.
-        "streaming_supported": status["url"] is None,
+        "state": "off",
+        "url": None,
+        "error": None,
+        "auto_start": False,
+        "available": False,
+        "managed_by": None,
+        "can_start": False,
+        "can_stop": False,
+        "block_reason": "explicitly_disabled",
+        "password_pending": False,
+        "streaming_supported": True,
     }
 
 
 def start_remote_access(app_state) -> dict:
-    """Schedule a settings-owned start. Repeated requests are idempotent."""
-    global _start_worker, _start_worker_admission
-    from cloudflare_tunnel import (
-        capture_studio_tunnel_start_admission,
-        get_studio_tunnel_control_token,
-    )
-
-    admission = capture_studio_tunnel_start_admission()
-    if admission is None:
-        raise RuntimeError("server_shutting_down")
-    status = remote_access_status(app_state)
-    current = get_studio_tunnel_control_token()
-    if current[0] != admission[0]:
-        raise RuntimeError("server_lifecycle_changed")
-    if status["managed_by"] == "settings" and status["state"] in {"starting", "online"}:
-        return status
-    if not status["can_start"]:
-        raise RuntimeError(status["block_reason"] or "operation_in_progress")
-
-    port = getattr(app_state, "remote_access_port", None)
-    if not isinstance(port, int) or port <= 0:
-        raise RuntimeError("server_port_unavailable")
-    origin_host = getattr(app_state, "server_request_host", None)
-    if not isinstance(origin_host, str) or not origin_host:
-        raise RuntimeError("server_address_unavailable")
-    if get_studio_tunnel_control_token() != admission:
-        raise RuntimeError("server_lifecycle_changed")
-
-    def _start() -> None:
-        from cloudflare_tunnel import start_studio_tunnel
-        url = start_studio_tunnel(
-            port,
-            managed_by = "settings",
-            admission = admission,
-            origin_host = origin_host,
-        )
-        if url:
-            logger.info("Secure link access via Cloudflare: %s", url)
-
-    _open_remote_access_stop_response_admission()
-    with _worker_lock:
-        if not _worker_is_current(_start_worker, _start_worker_admission, admission):
-            _start_worker = threading.Thread(target = _start, daemon = True)
-            _start_worker_admission = admission
-            _start_worker.start()
-    return remote_access_status(app_state)
+    """Moish seam: loopback only; there is no tunnel to start."""
+    raise RuntimeError("explicitly_disabled")
 
 
 def stop_remote_access(app_state) -> dict:
-    """Schedule a settings-owned stop without changing the auto-start preference."""
-    global _stop_worker, _stop_worker_admission
-    from cloudflare_tunnel import (
-        capture_studio_tunnel_start_admission,
-        get_studio_tunnel_control_token,
-    )
-
-    admission = capture_studio_tunnel_start_admission()
-    if admission is None:
-        raise RuntimeError("server_shutting_down")
-    status = remote_access_status(app_state)
-    current = get_studio_tunnel_control_token()
-    if current[0] != admission[0]:
-        raise RuntimeError("server_lifecycle_changed")
-    if status["state"] == "off" and status["managed_by"] is None:
-        return status
-    if status["state"] == "stopping" and status["managed_by"] == "settings":
-        return status
-    if status["managed_by"] != "settings":
-        raise RuntimeError(status["block_reason"] or "not_settings_managed")
-
-    if get_studio_tunnel_control_token() != admission:
-        raise RuntimeError("server_lifecycle_changed")
-
-    def _stop() -> None:
-        global _stop_worker_admission
-        from cloudflare_tunnel import get_studio_tunnel_status, stop_studio_tunnel
-
-        # A stop can beat the newly-created start worker to the controller.
-        deadline = time.monotonic() + _STOP_OWNERSHIP_WAIT
-        while _worker_alive(_start_worker) and time.monotonic() < deadline:
-            if get_studio_tunnel_status()["managed_by"] == "settings":
-                break
-            time.sleep(0.02)
-        current = get_studio_tunnel_control_token()
-        if current[0] != admission[0]:
-            return
-        if get_studio_tunnel_status()["managed_by"] == "settings":
-            # Every Stop admitted before this teardown decision must finish traversing cloudflared, so
-            # admission closes at the end of the drain, else a later request creates an unobserved lease.
-            _drain_and_close_remote_access_stop_responses()
-            current = get_studio_tunnel_control_token()
-            if current[0] != admission[0] or get_studio_tunnel_status()["managed_by"] != "settings":
-                _open_remote_access_stop_response_admission()
-                return
-            with _worker_lock:
-                if _stop_worker is threading.current_thread():
-                    _stop_worker_admission = current
-            try:
-                stop_studio_tunnel(admission = current)
-                if get_studio_tunnel_status().get("stop_pending"):
-                    _open_remote_access_stop_response_admission()
-            except Exception:
-                _open_remote_access_stop_response_admission()
-                raise
-
-    with _worker_lock:
-        if not _worker_is_current(_stop_worker, _stop_worker_admission, admission):
-            _stop_worker = threading.Thread(target = _stop, daemon = True)
-            _stop_worker_admission = admission
-            _stop_worker.start()
+    """Moish seam: nothing to stop."""
     return remote_access_status(app_state)
 
 
