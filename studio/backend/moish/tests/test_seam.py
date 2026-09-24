@@ -227,6 +227,105 @@ def test_the_ui_sends_the_conversation_id_for_a_tools_off_provider() -> None:
     )
 
 
+def test_studio_runs_hugging_face_offline(monkeypatch) -> None:
+    """Found live (2026-09-24): Studio fetched a top-models ranking at startup and a
+    tokenizer_config on a load click — both from huggingface.co, both stopped only by the OS
+    firewall. Egress is governed in code (Invariant 2): the seam puts every Hugging Face client
+    in offline mode, which those paths already honour."""
+    from moish import guards
+    from utils.utils import hf_env_offline
+
+    for var in guards.OFFLINE_VARS:
+        monkeypatch.delenv(var, raising=False)
+    assert not hf_env_offline()
+    guards.apply()
+    assert hf_env_offline()
+    assert {v: __import__("os").environ[v] for v in guards.OFFLINE_VARS} == {
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+    }
+
+
+def _download_app():
+    from fastapi import FastAPI
+
+    from moish import guards
+
+    app = FastAPI()
+    reached: list[str] = []
+    for path in guards.DOWNLOAD_PATHS + ("/api/hub/download/cancel", "/api/models/list"):
+
+        def handler(path=path) -> dict:
+            reached.append(path)
+            return {"ok": True}
+
+        app.add_api_route(path, handler, methods=["POST"])
+    guards.refuse_downloads(app)
+    return app, reached
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/hub/download", "/api/hub/datasets/download", "/api/inference/audio/stt/download"],
+)
+def test_a_download_is_refused_and_says_how_to_add_a_model(path) -> None:
+    """Fetching a model is a governed Moish operation (phase 2), never a Studio button."""
+    from fastapi.testclient import TestClient
+
+    app, reached = _download_app()
+    with TestClient(app) as http:
+        resp = http.post(path, json={"repo_id": "unsloth/anything"})
+    assert resp.status_code == 403
+    assert "import-model" in resp.json()["detail"]
+    assert reached == [], "the download handler ran"
+
+
+def test_other_routes_are_untouched_by_the_download_refusal() -> None:
+    from fastapi.testclient import TestClient
+
+    app, reached = _download_app()
+    with TestClient(app) as http:
+        assert http.post("/api/models/list").status_code == 200
+        assert http.post("/api/hub/download/cancel").status_code == 200
+    assert reached == ["/api/models/list", "/api/hub/download/cancel"]
+
+
+def test_the_seam_installs_the_refusal_and_reports_it() -> None:
+    """``register`` — the one call main.py makes — puts the refusal in front of the app, and
+    the self-check says so."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from moish import seam
+
+    app = FastAPI()
+    reached: list[str] = []
+    app.add_api_route("/api/hub/download", lambda: reached.append("x"), methods=["POST"])
+    seam.register(app)
+    with TestClient(app) as http:
+        assert http.post("/api/hub/download", json={}).status_code == 403
+        check = http.get("/api/moish/selfcheck").json()
+    assert reached == []
+    assert check["hf_offline"] is True
+    assert "/api/hub/download" in check["downloads_refused"]
+
+
+def test_a_local_load_says_where_models_run() -> None:
+    from moish import guards
+
+    assert "Connected" in guards.MESSAGE and "Moish" in guards.MESSAGE
+    assert "import-model" in guards.MESSAGE
+
+
+def test_the_gpu_panels_say_moish_manages_the_gpu() -> None:
+    """Studio has no torch and no runtime, so it sees no GPU; the GPU belongs to the Moish
+    runtime. The English strings say so instead of 'No visible GPU'."""
+    source = (REPO / "studio/frontend/src/i18n/locales/en.ts").read_text(encoding="utf-8")
+    assert "No visible GPU" not in source
+    assert source.count("managed by Moish") >= 2
+
+
 #: Pinned independently of guards.GUARDED, so dropping an entry there fails here.
 REQUIRED_GUARDS = (
     ("core.inference.llama_cpp", "LlamaCppBackend", "load_model"),

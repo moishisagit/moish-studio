@@ -7,17 +7,38 @@ no torch, so these guards are the second layer, not the only one.
 
 Tools are forced off (``set_tool_policy(False)``: Moish executes tools, phase 2), and keyless
 API access is refused, so nothing reaches Studio's API without a Studio session.
+
+Egress (Invariant 2) is governed here in code, not only by the OS firewall: every Hugging Face
+client runs offline, and the download endpoints are refused with a message that says how a
+model is added instead (a Moish import; a governed download is phase 2).
 """
 
 from __future__ import annotations
 
 import importlib
 import inspect
+import os
 from typing import Any
 
+_ADD_A_MODEL = (
+    "To add a model, import a GGUF in Moish (uv run python -m control_plane import-model "
+    "--blob <file> --alias <name>, in moish-platform); it then appears under Connected > Moish."
+)
 MESSAGE = (
-    "Local model runtimes are disabled in this build: every model call goes through the "
-    "Moish gateway (Studio slice 1)."
+    "Studio does not load models in this build: every model runs in Moish. Pick a model under "
+    "Connected > Moish in the model picker. " + _ADD_A_MODEL
+)
+DOWNLOAD_MESSAGE = (
+    "Downloads are not available in Studio: fetching a model is a governed Moish operation "
+    "(not built yet). " + _ADD_A_MODEL
+)
+#: Every Hugging Face client Studio carries reads one of these; all are forced on.
+OFFLINE_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
+#: The endpoints that start a download (their cancel/status/plan siblings do not fetch).
+DOWNLOAD_PATHS = (
+    "/api/hub/download",
+    "/api/hub/datasets/download",
+    "/api/inference/audio/stt/download",
 )
 
 
@@ -79,7 +100,25 @@ def keyless_off() -> None:
     keyless_api_access.keyless_request_allowed = lambda *_a, **_k: False
 
 
+def network_off() -> None:
+    """Hugging Face offline, process-wide: no ranking, metadata or weight fetch leaves Studio."""
+    for var in OFFLINE_VARS:
+        os.environ[var] = "1"
+
+
+def refuse_downloads(app: Any) -> None:
+    """Refuse every download start before its handler runs (403, with how to add a model)."""
+    from fastapi.responses import JSONResponse
+
+    @app.middleware("http")
+    async def _no_downloads(request: Any, call_next: Any) -> Any:
+        if request.method == "POST" and request.url.path.rstrip("/") in DOWNLOAD_PATHS:
+            return JSONResponse(status_code=403, content={"detail": DOWNLOAD_MESSAGE})
+        return await call_next(request)
+
+
 def apply() -> list[str]:
+    network_off()
     guarded = forbid_local_runtime()
     tools_off()
     keyless_off()

@@ -14,6 +14,7 @@ def register(app: Any) -> None:
     config.gateway_url()  # refuse to start with a non-loopback gateway
     providers.install_provider_store()
     _STATE["guarded"] = guards.apply()
+    guards.refuse_downloads(app)
 
     @app.get("/api/moish/selfcheck")
     def moish_selfcheck() -> dict[str, Any]:
@@ -36,4 +37,6 @@ def register(app: Any) -> None:
             "guarded_runtime_entries": list(_STATE["guarded"]),
             "child_processes": children,
             "torch_loaded": "torch" in sys.modules,
+            "hf_offline": all(os.environ.get(v) == "1" for v in guards.OFFLINE_VARS),
+            "downloads_refused": list(guards.DOWNLOAD_PATHS),
         }

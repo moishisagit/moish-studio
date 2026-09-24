@@ -25,6 +25,7 @@ marked for the next upstream sync (itself a governed, human-initiated network op
 | `studio/backend/run.py` | refuses a non-loopback `--host` and `--secure`/`--cloudflare`; tunnel lifecycle removed; `_cloudflare_tunnel_should_start` always False; default port 8890 | loopback only (plan §1.2) | medium |
 | `studio/backend/utils/remote_access_settings.py` | status/start/stop return "disabled" (same shape) | no tunnel | low |
 | `studio/frontend/src/features/chat/api/chat-adapter.ts` | the external-provider request body carries `thread_id` at its top level (one line, beside `provider_id`); upstream sent it only inside the tools-on branch, so a tools-off provider (Moish) got no conversation id (found live 2026-09-24, Moish O21). `dist` rebuilt locally with `npm run build` (offline; `node_modules` present); the previous build is kept outside the repo as `C:\dev\moish\studio-frontend-dist.pre-slice1.1-20260924` (`dist` is gitignored) | one conversation, one Moish Run | low |
+| `studio/frontend/src/i18n/locales/en.ts` | three English `noGpu` strings say the GPU is managed by Moish instead of "No visible GPU" / "No GPU detected" (other locales unchanged) — Studio has no torch and no runtime, so it never sees the GPU the Moish runtime holds (Moish O25) | the UI said the machine had no GPU | low |
 | `unsloth_cli/__init__.py` | only `unsloth studio` is registered | plan §2.4a.5 | medium |
 | `unsloth_cli/commands/studio.py` | `studio run` is no longer a command | bypass path §2.2 #12 | medium |
 
@@ -44,6 +45,12 @@ marked for the next upstream sync (itself a governed, human-initiated network op
   only `api_key` / `chatgpt_oauth`; another value made `/api/providers/registry` answer 500 and
   hid the provider from the picker (found live 2026-09-24, Moish O20). The key is the Moish
   client credential, read by the seam at request time.
+- Network is governed in the seam, not only by the OS firewall (Moish O25): `guards.network_off`
+  forces `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` / `HF_DATASETS_OFFLINE`, which Studio's
+  top-models ranking and model-metadata fetches already honour (both were seen live trying
+  `huggingface.co` and stopped only by the firewall); `guards.refuse_downloads` answers the three
+  download-start endpoints with 403 and how to import a model into Moish instead. A local load
+  still reaches the runtime guard, whose message now says where models run.
 - `routes/provider_credentials.py` — a generic UI-session / credential guard used by settings
   and inference, not cloud code (O18).
 - Residual cloud host literals in unreachable translation code and frontend files — pinned by

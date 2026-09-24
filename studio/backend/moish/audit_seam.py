@@ -119,6 +119,30 @@ MUTATIONS = [
         "    return thread_id",
     ),
     Mutation(
+        "Hugging Face clients stay online",
+        "moish/guards.py",
+        '        os.environ[var] = "1"',
+        "        pass",
+    ),
+    Mutation(
+        "a download start reaches its handler",
+        "moish/guards.py",
+        '        if request.method == "POST" and request.url.path.rstrip("/") in DOWNLOAD_PATHS:',
+        "        if False:",
+    ),
+    Mutation(
+        "the download refusal is never installed",
+        "moish/seam.py",
+        "    guards.refuse_downloads(app)\n",
+        "",
+    ),
+    Mutation(
+        "the GPU panel says no visible GPU",
+        "../frontend/src/i18n/locales/en.ts",
+        '        noGpu: "GPU managed by Moish",\n        gpuUnusable',
+        '        noGpu: "No visible GPU",\n        gpuUnusable',
+    ),
+    Mutation(
         "Studio binds any host",
         "run.py",
         "    if not _loopback:\n        raise SystemExit",
