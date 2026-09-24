@@ -106,6 +106,13 @@ MUTATIONS = [
         "                **_provider_kwargs,",
     ),
     Mutation(
+        "the UI sends the conversation id only with tools on",
+        "../frontend/src/features/chat/api/chat-adapter.ts",
+        "              ...(resolvedThreadId ? { thread_id: resolvedThreadId } : {}),\n"
+        "              provider_id: externalProvider.id,",
+        "              provider_id: externalProvider.id,",
+    ),
+    Mutation(
         "an id the gateway would refuse is sent raw",
         "moish/client.py",
         '    return "sha256-" + hashlib.sha256(thread_id.encode("utf-8")).hexdigest()[:32]',
@@ -131,8 +138,12 @@ def _run_tests() -> bool:
 
 
 def _tree() -> str:
+    # the backend and the one frontend source tree a mutation touches (chat-adapter.ts)
     return subprocess.run(
-        ["git", "status", "--porcelain", "--", "."], cwd=BACKEND, capture_output=True, text=True
+        ["git", "status", "--porcelain", "--", ".", "../frontend/src"],
+        cwd=BACKEND,
+        capture_output=True,
+        text=True,
     ).stdout
 
 

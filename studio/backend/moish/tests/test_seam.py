@@ -211,6 +211,22 @@ def test_the_chat_route_passes_the_conversation_id_to_the_provider() -> None:
     assert re.search(r"^\s*thread_id = payload\.thread_id,\s*$", calls[0], re.M), calls[0]
 
 
+def test_the_ui_sends_the_conversation_id_for_a_tools_off_provider() -> None:
+    """Found live (2026-09-24): Studio's frontend put ``thread_id`` in an external-provider
+    request only inside its tools-ON branch; Moish is tools-off, so every Studio turn arrived
+    without it and got its own Run. The id must sit at the body's top level, beside
+    ``provider_id``, so it is sent whatever the tool state (Moish O21)."""
+    source = (REPO / "studio/frontend/src/features/chat/api/chat-adapter.ts").read_text(
+        encoding="utf-8"
+    )
+    anchor = "              provider_id: externalProvider.id,\n"
+    assert source.count(anchor) == 1, "the external-provider request body moved"
+    before = source[: source.index(anchor)].splitlines()[-4:]
+    assert "              ...(resolvedThreadId ? { thread_id: resolvedThreadId } : {})," in before, (
+        before
+    )
+
+
 #: Pinned independently of guards.GUARDED, so dropping an entry there fails here.
 REQUIRED_GUARDS = (
     ("core.inference.llama_cpp", "LlamaCppBackend", "load_model"),

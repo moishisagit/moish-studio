@@ -6339,6 +6339,9 @@ export function createOpenAIStreamAdapter(
               // Also on this body: a provider whose models run Studio tools can hand off too, and omitting
               // it makes arming research a no-op.
               ...(deepResearchArmed ? { deep_research_armed: true } : {}),
+              // Moish seam: the conversation id rides on every provider turn, tools on or off, so
+              // the gateway keeps one Run per conversation (Moish O21).
+              ...(resolvedThreadId ? { thread_id: resolvedThreadId } : {}),
               provider_id: externalProvider.id,
               provider_type: externalBackendProviderType,
               external_model: externalSelection.modelId,

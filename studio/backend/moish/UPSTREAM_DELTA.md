@@ -24,6 +24,7 @@ marked for the next upstream sync (itself a governed, human-initiated network op
 | `studio/backend/routes/__init__.py` | `openai_codex_auth_router` export removed | follows the deletion | low |
 | `studio/backend/run.py` | refuses a non-loopback `--host` and `--secure`/`--cloudflare`; tunnel lifecycle removed; `_cloudflare_tunnel_should_start` always False; default port 8890 | loopback only (plan §1.2) | medium |
 | `studio/backend/utils/remote_access_settings.py` | status/start/stop return "disabled" (same shape) | no tunnel | low |
+| `studio/frontend/src/features/chat/api/chat-adapter.ts` | the external-provider request body carries `thread_id` at its top level (one line, beside `provider_id`); upstream sent it only inside the tools-on branch, so a tools-off provider (Moish) got no conversation id (found live 2026-09-24, Moish O21). `dist` rebuilt locally with `npm run build` (offline; `node_modules` present); the previous build is kept outside the repo as `C:\dev\moish\studio-frontend-dist.pre-slice1.1-20260924` (`dist` is gitignored) | one conversation, one Moish Run | low |
 | `unsloth_cli/__init__.py` | only `unsloth studio` is registered | plan §2.4a.5 | medium |
 | `unsloth_cli/commands/studio.py` | `studio run` is no longer a command | bypass path §2.2 #12 | medium |
 
@@ -48,8 +49,9 @@ marked for the next upstream sync (itself a governed, human-initiated network op
 - Residual cloud host literals in unreachable translation code and frontend files — pinned by
   `tests/cloud_literal_ratchet.json` so they can only shrink (O16). Tracked in Moish
   `docs/known-issues.md`.
-- The frontend is unchanged in slice 1: with the registry `{moish}` and the store fixed, the
-  UI offers only Moish (O17 note). Removing the dead provider UI is phase 2 work with `ui/`.
+- The frontend is unchanged apart from the one `chat-adapter.ts` line above (slice 1.1): with
+  the registry `{moish}` and the store fixed, the UI offers only Moish (O17 note). Removing the
+  dead provider UI is phase 2 work with `ui/`.
 
 ## Verify
 
