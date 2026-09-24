@@ -94,6 +94,24 @@ MUTATIONS = [
         "        _provider_response(row)",
     ),
     Mutation(
+        "the conversation id is not sent to the gateway",
+        "moish/client.py",
+        '        headers["X-Moish-Thread"] = thread',
+        "        pass",
+    ),
+    Mutation(
+        "the chat route drops the conversation id",
+        "routes/inference.py",
+        "                thread_id = payload.thread_id,\n                **_provider_kwargs,",
+        "                **_provider_kwargs,",
+    ),
+    Mutation(
+        "an id the gateway would refuse is sent raw",
+        "moish/client.py",
+        '    return "sha256-" + hashlib.sha256(thread_id.encode("utf-8")).hexdigest()[:32]',
+        "    return thread_id",
+    ),
+    Mutation(
         "Studio binds any host",
         "run.py",
         "    if not _loopback:\n        raise SystemExit",

@@ -114,6 +114,103 @@ def test_without_a_credential_nothing_is_sent(monkeypatch, tmp_path) -> None:
     assert len(lines) == 1 and "issue-client" in lines[0]
 
 
+def _gateway_capture(monkeypatch, tmp_path):
+    """Route ``stream_moish``'s HTTP call to a MockTransport; return the captured requests."""
+    import httpx
+
+    from moish import client
+
+    token = tmp_path / "studio.token"
+    token.write_text("cred", encoding="utf-8")
+    monkeypatch.setenv("MOISH_CLIENT_TOKEN_FILE", str(token))
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = 'data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        client.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+    return seen
+
+
+def _drain(gen) -> list[str]:
+    async def collect():
+        return [line async for line in gen]
+
+    return asyncio.run(collect())
+
+
+@pytest.mark.parametrize(
+    ("thread_id", "sent"),
+    [
+        ("__LOCALID_qm5C3kB", "__LOCALID_qm5C3kB"),
+        ("thread.1:a-b", "thread.1:a-b"),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_the_conversation_id_reaches_the_gateway_as_its_thread(
+    monkeypatch, tmp_path, thread_id, sent
+) -> None:
+    """K-2 / O15: one Studio conversation is one Moish Run, so its id is ``X-Moish-Thread``."""
+    from moish import client
+
+    seen = _gateway_capture(monkeypatch, tmp_path)
+    lines = _drain(client.stream_moish([{"role": "user", "content": "hi"}], "m", thread_id=thread_id))
+    assert lines[-1] == "data: [DONE]"
+    [request] = seen
+    assert request.headers.get("x-moish-thread") == sent
+
+
+@pytest.mark.parametrize("thread_id", ["has space", "x" * 129, "ümlaut", "a/b"])
+def test_an_id_the_gateway_would_refuse_is_sent_as_a_stable_digest(
+    monkeypatch, tmp_path, thread_id
+) -> None:
+    """The gateway accepts ``^[A-Za-z0-9._:-]{1,128}$``. Any other id is sent as a digest, so the
+    conversation still gets one Run instead of a 400."""
+    from moish import client
+
+    seen = _gateway_capture(monkeypatch, tmp_path)
+    for _ in range(2):
+        _drain(client.stream_moish([{"role": "user", "content": "hi"}], "m", thread_id=thread_id))
+    first, second = (r.headers.get("x-moish-thread") for r in seen)
+    assert first == second, "the same conversation must map to the same thread"
+    assert re.fullmatch(r"sha256-[0-9a-f]{32}", first), first
+
+
+def test_the_studio_client_forwards_the_conversation_id(monkeypatch) -> None:
+    from core.inference.external_provider import ExternalProviderClient
+    from moish import client
+
+    captured: dict = {}
+
+    async def fake_stream_moish(messages, model, **kw):
+        captured.update(kw)
+        yield "data: [DONE]"
+
+    monkeypatch.setattr(client, "stream_moish", fake_stream_moish)
+    provider = ExternalProviderClient("moish", "", "")
+    _drain(
+        provider.stream_chat_completion(
+            messages=[{"role": "user", "content": "hi"}], model="m", thread_id="__LOCALID_t1"
+        )
+    )
+    assert captured.get("thread_id") == "__LOCALID_t1"
+
+
+def test_the_chat_route_passes_the_conversation_id_to_the_provider() -> None:
+    """The one moish call site (routes/inference.py) hands Studio's ``payload.thread_id`` on.
+    Static, because the route is ~28k lines of upstream code (O15)."""
+    source = (BACKEND / "routes" / "inference.py").read_text(encoding="utf-8")
+    calls = re.findall(r"gen = client\.stream_chat_completion\((.*?)\n\s*\)\n", source, re.S)
+    assert len(calls) == 1, f"expected one provider stream call site, found {len(calls)}"
+    assert re.search(r"^\s*thread_id = payload\.thread_id,\s*$", calls[0], re.M), calls[0]
+
+
 #: Pinned independently of guards.GUARDED, so dropping an entry there fails here.
 REQUIRED_GUARDS = (
     ("core.inference.llama_cpp", "LlamaCppBackend", "load_model"),

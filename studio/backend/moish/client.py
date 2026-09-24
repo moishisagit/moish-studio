@@ -12,11 +12,15 @@ and relays the gateway's SSE lines unchanged.
 * sampling: ``temperature``, ``top_p``, ``max_tokens``, ``stop``. Nothing else.
 * no tools, ever: Moish executes tools (phase 2); Studio never asks.
 * the credential comes from ``config.read_token()`` at request time.
+* Studio's conversation id is sent as ``X-Moish-Thread`` (``thread_header``), so one
+  conversation is one Moish Run (Moish O15/O21).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -99,6 +103,23 @@ def auth_headers() -> dict[str, str]:
     return headers
 
 
+#: What the gateway accepts as ``X-Moish-Thread`` (Moish ``control_plane/gateway.py``).
+_THREAD = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def thread_header(thread_id: str | None) -> str | None:
+    """The ``X-Moish-Thread`` for a Studio conversation: one conversation, one Moish Run (O15).
+
+    Studio's own id when the gateway accepts it; otherwise a stable digest of it, so the
+    conversation still maps to one thread. No id → no header → a per-turn Run (the fail-safe).
+    """
+    if not thread_id:
+        return None
+    if _THREAD.match(thread_id):
+        return thread_id
+    return "sha256-" + hashlib.sha256(thread_id.encode("utf-8")).hexdigest()[:32]
+
+
 async def stream_moish(
     messages: list[dict[str, Any]],
     model: str,
@@ -108,8 +129,11 @@ async def stream_moish(
     max_tokens: int | None = None,
     stream: bool = True,
     timeout: float = 600.0,
+    thread_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Yield the gateway's OpenAI-format SSE lines (``data: ...``), as Studio expects."""
+    """Yield the gateway's OpenAI-format SSE lines (``data: ...``), as Studio expects.
+
+    ``thread_id`` is Studio's conversation id; it becomes ``X-Moish-Thread``."""
     from core.inference.external_provider import _error_sse_line
 
     try:
@@ -135,9 +159,13 @@ async def stream_moish(
         return
     url = f"{config.gateway_url()}/chat/completions"
     limits = httpx.Timeout(timeout, connect=10.0, read=timeout)
+    headers = auth_headers()
+    thread = thread_header(thread_id)
+    if thread is not None:
+        headers["X-Moish-Thread"] = thread
     try:
         async with httpx.AsyncClient(timeout=limits) as client:
-            async with client.stream("POST", url, json=body, headers=auth_headers()) as response:
+            async with client.stream("POST", url, json=body, headers=headers) as response:
                 if response.status_code != 200:
                     text = (await response.aread()).decode("utf-8", errors="replace")
                     yield _error_sse_line(response.status_code, text, config.PROVIDER_TYPE, None)

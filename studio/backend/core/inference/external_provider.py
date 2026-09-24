@@ -1385,6 +1385,8 @@ class ExternalProviderClient:
         continue_final_message: Optional[bool] = None,
         response_format: Optional[dict[str, Any]] = None,
         stream: bool = True,
+        # Moish seam: Studio's conversation id, sent as X-Moish-Thread (one conversation, one Run).
+        thread_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Yield OpenAI-format SSE lines from the external provider. OpenAI-compatible providers
         forward lines verbatim; for Anthropic the native Messages API SSE is translated.
@@ -1403,6 +1405,7 @@ class ExternalProviderClient:
                 top_p = top_p,
                 max_tokens = max_tokens,
                 stream = stream,
+                thread_id = thread_id,
             ):
                 yield line
             return

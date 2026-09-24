@@ -23310,6 +23310,8 @@ async def _proxy_to_external_provider(
                 tool_choice = payload.tool_choice,
                 continue_final_message = _continue_final_message(payload),
                 stream = payload.stream,
+                # Moish seam: the conversation id → X-Moish-Thread (one conversation, one Run).
+                thread_id = payload.thread_id,
                 **_provider_kwargs,
             )
         disconnect_task = asyncio.create_task(_watch_disconnect()) if run_studio_tool_loop else None
