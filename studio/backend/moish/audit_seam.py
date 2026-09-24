@@ -82,6 +82,18 @@ MUTATIONS = [
         "",
     ),
     Mutation(
+        "the registry entry fails Studio's response model",
+        "moish/providers.py",
+        '    "auth_kind": "api_key",',
+        '    "auth_kind": "moish_client_credential",',
+    ),
+    Mutation(
+        "the saved Moish row lists no models",
+        "routes/providers.py",
+        '        _provider_response({**row, "models": listed, "available_models": listed})',
+        "        _provider_response(row)",
+    ),
+    Mutation(
         "Studio binds any host",
         "run.py",
         "    if not _loopback:\n        raise SystemExit",

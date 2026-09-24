@@ -158,6 +158,54 @@ def test_the_provider_store_shows_only_moish_and_refuses_writes() -> None:
         )
 
 
+def _provider_http(monkeypatch, list_models):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from auth.authentication import get_current_subject
+    from moish import client, providers
+    from routes import providers as provider_routes
+
+    providers.install_provider_store()
+    monkeypatch.setattr(client, "list_models", list_models)
+    app = FastAPI()
+    app.include_router(provider_routes.router, prefix="/api/providers")
+    app.dependency_overrides[get_current_subject] = lambda: "test-subject"
+    return TestClient(app)
+
+
+def test_the_provider_routes_serve_what_the_frontend_syncs(monkeypatch) -> None:
+    """The registry and saved-provider list pass Studio's own response models, and the saved
+    Moish row lists the gateway's models — Studio's picker shows only a provider's saved models.
+
+    Found live (2026-09-24): an ``auth_kind`` outside the response model's literal made
+    ``/api/providers/registry`` answer 500, and the saved row carried ``models: []``, so the
+    model picker showed no Moish model.
+    """
+
+    async def gateway_models(timeout: float = 15.0):
+        return [{"id": "qwen2.5-coder-7b", "owned_by": "moish"}, {"id": "qwen3.8-27b-coder"}]
+
+    with _provider_http(monkeypatch, gateway_models) as http:
+        registry = http.get("/api/providers/registry", params={"include_hidden": "true"})
+        saved = http.get("/api/providers/")
+    assert registry.status_code == 200, registry.text
+    assert [e["provider_type"] for e in registry.json()] == ["moish"]
+    assert saved.status_code == 200, saved.text
+    assert [(p["id"], p["is_enabled"]) for p in saved.json()] == [("moish", True)]
+    assert saved.json()[0]["models"] == ["qwen2.5-coder-7b", "qwen3.8-27b-coder"]
+
+
+def test_an_unreachable_gateway_still_lists_the_provider(monkeypatch) -> None:
+    async def gateway_down(timeout: float = 15.0):
+        raise OSError("connection refused")
+
+    with _provider_http(monkeypatch, gateway_down) as http:
+        saved = http.get("/api/providers/")
+    assert saved.status_code == 200, saved.text
+    assert [(p["id"], p["models"]) for p in saved.json()] == [("moish", [])]
+
+
 @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "::"])
 def test_studio_refuses_a_non_loopback_bind(host) -> None:
     import run

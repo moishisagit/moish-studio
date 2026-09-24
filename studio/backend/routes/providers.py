@@ -86,8 +86,18 @@ async def get_pricing_snapshot():
 
 
 @router.get("/", response_model = list[ProviderResponse])
-def list_provider_configs():
-    return [_provider_response(row) for row in providers_db.list_providers()]
+async def list_provider_configs():
+    """The saved Moish row, listing the gateway's models: Studio's picker shows only a
+    provider's saved models, and saving a selection is refused here (providers are fixed)."""
+    try:
+        listed = [m["id"] for m in await moish_client.list_models() if m.get("id")]
+    except Exception as exc:  # noqa: BLE001 — the provider still lists; its models come back later
+        logger.warning("moish.list_models_failed", error = str(exc))
+        listed = []
+    return [
+        _provider_response({**row, "models": listed, "available_models": listed})
+        for row in providers_db.list_providers()
+    ]
 
 
 @router.post("/", status_code = 403)

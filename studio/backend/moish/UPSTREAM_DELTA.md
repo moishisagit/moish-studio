@@ -19,7 +19,7 @@ marked for the next upstream sync (itself a governed, human-initiated network op
 | `studio/backend/main.py` | `moish.register(app)` before the first router; unmounted: `openai_codex_auth`, `research_runs`, `video` ×3, `mcp_servers`, `skills`, `data_recipe`, `llama`, `whisper`, `export`, `rag`, `hub_datasets`, `hub_token`, `youtube`, `training`, `training_history`; `/mcp` never mounted; release-notes route and Codex shutdown removed; `llama_cpp` version reported as `None` | single authority; no ungoverned network; no runtime in Studio | **high** |
 | `studio/backend/core/inference/providers.py` | `PROVIDER_REGISTRY = {"moish": MOISH_PROVIDER}` — 432 lines of cloud/self-hosted entries deleted; one comment host literal neutralised | Invariant 8: cloud code absent | **high** |
 | `studio/backend/core/inference/external_provider.py` | constructor refuses any type outside the registry; `moish` pins base URL + reads the credential file; `stream_chat_completion` routes `moish` to `moish.client.stream_moish` | the gateway is a whitelist (O14) | **high** |
-| `studio/backend/routes/providers.py` | rewritten Moish-only: same paths; writes 403; models from the gateway; no models.dev fetch, no cloud pricing, no Codex | single authority, no network | **high** (whole-file) |
+| `studio/backend/routes/providers.py` | rewritten Moish-only: same paths; writes 403; models from the gateway; no models.dev fetch, no cloud pricing, no Codex. The saved Moish row lists the gateway's `/v1/models` (the picker shows only saved models; found live 2026-09-24, Moish O20) | single authority, no network | **high** (whole-file) |
 | `studio/backend/routes/inference.py` | the `openai_codex` branch (446 lines) and `_append_to_codex_instructions` deleted | cloud code absent | medium |
 | `studio/backend/routes/__init__.py` | `openai_codex_auth_router` export removed | follows the deletion | low |
 | `studio/backend/run.py` | refuses a non-loopback `--host` and `--secure`/`--cloudflare`; tunnel lifecycle removed; `_cloudflare_tunnel_should_start` always False; default port 8890 | loopback only (plan §1.2) | medium |
@@ -39,6 +39,10 @@ marked for the next upstream sync (itself a governed, human-initiated network op
 
 ## Deliberately kept (decisions)
 
+- The Moish registry entry declares `auth_kind: "api_key"` — Studio's response model accepts
+  only `api_key` / `chatgpt_oauth`; another value made `/api/providers/registry` answer 500 and
+  hid the provider from the picker (found live 2026-09-24, Moish O20). The key is the Moish
+  client credential, read by the seam at request time.
 - `routes/provider_credentials.py` — a generic UI-session / credential guard used by settings
   and inference, not cloud code (O18).
 - Residual cloud host literals in unreachable translation code and frontend files — pinned by

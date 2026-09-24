@@ -25,7 +25,9 @@ MOISH_PROVIDER: dict[str, Any] = {
     "studio_tools": False,
     "auth_header": "Authorization",
     "auth_prefix": "Bearer ",
-    "auth_kind": "moish_client_credential",
+    # A bearer key in Studio's terms (``Literal["api_key", "chatgpt_oauth"]``); the key itself is
+    # the Moish client credential, read by the seam client at request time, never from the UI.
+    "auth_kind": "api_key",
     "base_url_editable": False,
     "model_ids_editable": False,
     "model_list_mode": "remote",
